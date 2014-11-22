@@ -3,7 +3,7 @@ package main
 import(
 	"fmt"
 	//"strings"
-	"bytes"
+	//"bytes"
 	"log"
 	"net"
 	//"math/rand"
@@ -130,8 +130,12 @@ func main() {
 		//all IP - array + linked queue for last free
 		//MAC - map
 
+		type MAC48 [6]byte;
+
 		const (
-			IP_Range  = 1024;
+			IP_Range = 1024;
+		)
+		var (
 			START_IP  = net.IP{194,188,32,1};
 			SERVER_IP = net.IP{194,188,64,28};
 		)
@@ -139,13 +143,13 @@ func main() {
 		type Stage byte;
 		const (
 			IP_Free     Stage = iota;
-			IP_Reserved Stage;
-			IP_NotFree  Stage;
+			IP_Reserved;
+			IP_NotFree;
 		)
 
 		type queueIP struct{
 			ip            net.IP;
-			 mac	net.HardwareAddr;
+			 mac	    MAC48;
 			 //expiry	time.Time;
 			stage         Stage;	//Only for light freeIPTest()
 			nextFreeIP   *queueIP;
@@ -271,9 +275,9 @@ func main() {
 			return IP[offset].stage;
 		};
 
-		var clientMAC map[net.HardwareAddr] *queueIP;
+		var clientMAC = map[MAC48] *queueIP {};
 
-		var safeSetMAC = func(offset int, MAC net.HardwareAddr){
+		var safeSetMAC = func(offset int, MAC MAC48){
 			if clientMAC[MAC] != nil && clientMAC[MAC] != &IP[offset] {
 				if IP[offset].stage == IP_Reserved {
 					getReserveIP(offset);
@@ -283,12 +287,12 @@ func main() {
 			clientMAC[MAC] = &IP[offset];
 			IP[offset].mac = MAC;
 		};
-		var setMAC = func(freeIP *queueIP, MAC net.HardwareAddr){
+		var setMAC = func(freeIP *queueIP, MAC MAC48){
 			clientMAC[MAC] = freeIP;
 			freeIP.mac = MAC;
 		};
-		var deleteMAC = func(MAC net.HardwareAddr){
-			clientMAC[MAC].mac = nil;
+		var deleteMAC = func(MAC MAC48){
+			clientMAC[MAC].mac = MAC48{0,0,0,0,0,0};
 			delete(clientMAC, MAC);
 		};
 
@@ -296,7 +300,7 @@ func main() {
 
 		return dhcp.Handler{
 			ServeDHCP: func(req dhcp.Packet, msgType dhcp.MessageType, options dhcp.Options) dhcp.Packet {
-				(map[dhcp.MessageType] func() dhcp.Packet{
+				return (map[dhcp.MessageType] func() dhcp.Packet{
 					dhcp.Discover: func() dhcp.Packet{
 						/*
 						switch android, iPhone, PC, ...
@@ -313,8 +317,8 @@ func main() {
 						var leasesPC;
 						log.Println(leases[string(bytes.SplitN(options[dhcp.OptionHostName],[]byte{'-'},2)[0])]);*/
 
-						var reqMAC = req.CHAddr();
-						var reqIP = net.IP(options[OptionRequestedIPAddress]);
+						var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());
+						var reqIP = net.IP(options[dhcp.OptionRequestedIPAddress]);
 
 						if tr:=req.CIAddr(); reqIP == nil && !tr.Equal(net.IP{0,0,0,0}) { reqIP = tr; }
 
@@ -327,15 +331,15 @@ func main() {
 							setMAC(record, reqMAC);
 							return dhcp.ReplyPacket(req, dhcp.Offer, SERVER_IP, record.ip, time.Hour, nil);
 						//double first
-						case reqIP == nil && clientMAC[reqMAC] != nil && freeIPTest(clientMAC[reqMAC]) == IP_Reserved:
+						case reqIP == nil && clientMAC[reqMAC] != nil && clientMAC[reqMAC].stage == IP_Reserved:
 							return dhcp.ReplyPacket(req, dhcp.Offer, SERVER_IP, clientMAC[reqMAC].ip, time.Hour, nil);
 						//old my friend
-						case reqIP == nil && clientMAC[reqMAC] != nil && freeIPTest(clientMAC[reqMAC]) == IP_NotFree:
+						case reqIP == nil && clientMAC[reqMAC] != nil && clientMAC[reqMAC].stage == IP_NotFree:
 							//change state to IP_Reserved
 							if getFreeIP(dhcp.IPRange(START_IP, clientMAC[reqMAC].ip)-1) != clientMAC[reqMAC] { panic("Bug#657438310"); } //TODO: Check
 							return dhcp.ReplyPacket(req, dhcp.Offer, SERVER_IP, clientMAC[reqMAC].ip, time.Hour, nil);
 						//detect error in this program
-						case reqIP == nil && clientMAC[reqMAC] != nil && freeIPTest(clientMAC[reqMAC]) == IP_Free:
+						case reqIP == nil && clientMAC[reqMAC] != nil && clientMAC[reqMAC].stage == IP_Free:
 							panic("Bug#5464985");
 							return nil;
 						case reqIP != nil && clientMAC[reqMAC] == nil:
@@ -354,7 +358,7 @@ func main() {
 							}
 						case reqIP != nil && clientMAC[reqMAC] != nil:
 							var offsetReqIP = dhcp.IPRange(START_IP, reqIP)-1;
-							if bytes.Equal(offsetToIP(offsetReqIP).mac, reqMAC) {
+							if offsetToIP(offsetReqIP).mac == reqMAC {
 								switch freeIPTest(offsetReqIP){
 								//double
 								case IP_Reserved:
@@ -377,7 +381,7 @@ func main() {
 									var record = getFreeIP(offsetReqIP);
 									return dhcp.ReplyPacket(req, dhcp.Offer, SERVER_IP, record.ip, time.Hour, nil);
 								case IP_Reserved, IP_NotFree:
-									switch freeIPTest(clientMAC[reqMAC]){
+									switch clientMAC[reqMAC].stage{
 									//double sclerosis
 									case IP_Reserved:
 										return dhcp.ReplyPacket(req, dhcp.Offer, SERVER_IP, clientMAC[reqMAC].ip, time.Hour, nil);
@@ -400,8 +404,8 @@ func main() {
 						return nil;
 					},
 					dhcp.Request: func() dhcp.Packet{
-						var reqMAC = req.CHAddr();
-						var reqIP = net.IP(options[OptionRequestedIPAddress]);
+						var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());
+						var reqIP = net.IP(options[dhcp.OptionRequestedIPAddress]);
 						var reqServerIP = net.IP(options[dhcp.OptionServerIdentifier]);
 
 						if tr:=req.CIAddr(); reqIP == nil && !tr.Equal(net.IP{0,0,0,0}) { reqIP = tr; }
@@ -424,7 +428,7 @@ func main() {
 						switch {
 						case serversIPEqual && reqIPInRange && clientMAC[reqMAC] != nil:
 							var offsetReqIP = dhcp.IPRange(START_IP, reqIP)-1;
-							if bytes.Equal(offsetToIP(offsetReqIP).mac, reqMAC) {										//TODO: test speed "offsetToIP(offsetReqIP)==clientMAC[reqMAC]" && "clientMAC[reqMAC].ip.Equal(reqIP)"
+							if offsetToIP(offsetReqIP).mac == reqMAC {										//TODO: test speed "offsetToIP(offsetReqIP)==clientMAC[reqMAC]" && "clientMAC[reqMAC].ip.Equal(reqIP)"
 								switch freeIPTest(offsetReqIP){
 								case IP_Reserved:
 									//change state to IP_NotFree
@@ -498,7 +502,7 @@ func main() {
 							return dhcp.ReplyPacket(req, dhcp.NAK, SERVER_IP, nil, 0, nil);
 						case !serversIPEqual && reqIPInRange && clientMAC[reqMAC] != nil:
 							var offsetReqIP = dhcp.IPRange(START_IP, reqIP)-1;
-							if bytes.Equal(offsetToIP(offsetReqIP).mac, reqMAC) {										//TODO: test speed "offsetToIP(offsetReqIP)==clientMAC[reqMAC]" && "clientMAC[reqMAC].ip.Equal(reqIP)"
+							if offsetToIP(offsetReqIP).mac == reqMAC {										//TODO: test speed "offsetToIP(offsetReqIP)==clientMAC[reqMAC]" && "clientMAC[reqMAC].ip.Equal(reqIP)"
 								switch freeIPTest(offsetReqIP){
 								case IP_Reserved:
 									//change state to IP_NotFree
@@ -516,8 +520,8 @@ func main() {
 								//move to user IP
 								case IP_Free:
 									safeSetMAC(offsetReqIP, reqMAC);
-									var record = getFreeIP(offsetReqIP);
-									record = getReserveIP(offsetReqIP);
+									/*var record =*/ getFreeIP(offsetReqIP);
+									/*record =*/ getReserveIP(offsetReqIP);
 									return nil;
 								case IP_Reserved, IP_NotFree:
 									switch clientMAC[reqMAC].stage {
@@ -575,10 +579,10 @@ func main() {
 						return nil;
 					},
 					dhcp.Decline: func() dhcp.Packet{
-						var reqMAC = req.CHAddr();
+						var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());
 
 						if clientMAC[reqMAC] != nil {
-							log.Println("IP conflict (Decline msg) - IP: " + clientMAC[reqMAC].ip.String() + " MAC: " + reqMAC.String());
+							log.Println("IP conflict (Decline msg) - IP: " + clientMAC[reqMAC].ip.String() + " MAC: " + net.HardwareAddr(reqMAC[:]).String());
 
 							switch clientMAC[reqMAC].stage {
 							case IP_Reserved:
@@ -601,7 +605,7 @@ func main() {
 						return nil;
 					},
 					dhcp.Release: func() dhcp.Packet{
-						var reqMAC = req.CHAddr();
+						var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());
 						var reqIP  = req.CIAddr();
 
 						if reqIP.Equal(net.IP{0,0,0,0}) { reqIP = nil; }
@@ -628,7 +632,7 @@ func main() {
 						return nil;
 					},
 					dhcp.Inform: func() dhcp.Packet{
-						var reqMAC = req.CHAddr();
+						var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());
 						var reqIP  = req.CIAddr();
 
 						if clientMAC[reqMAC].ip.Equal(reqIP) { // + "clientMAC[reqMAC] != nil" :-)
@@ -640,7 +644,6 @@ func main() {
 						return nil;
 					},
 				})[msgType]();
-				return nil;
 			},
 		};
 	}());
