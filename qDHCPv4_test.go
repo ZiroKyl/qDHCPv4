@@ -326,3 +326,5 @@ func BenchmarkDhcpHandler_0(b *testing.B){	//-benchtime 0.005s: 5000 ns/op 1230 
 		packet.SetCHAddr(mac);
 	}
 }
+
+//TODO: map vs switch-case

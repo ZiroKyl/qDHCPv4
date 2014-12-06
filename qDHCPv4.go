@@ -2,6 +2,7 @@ package main
 
 import(
 	"fmt"
+	"strconv"
 	//"strings"
 	//"bytes"
 	"log"
@@ -156,7 +157,17 @@ func (L *linkedLease) IP() net.IP{
 	}else     { return L.ip; }
 }
 
-var dhcpHandler = func() dhcp.Handler{
+// ServeConn is the bare minimum connection functions required by Serve()
+// It allows you to create custom connections for greater control,
+// such as ServeIfConn (see serverif.go), which locks to a given interface.
+type ServeConn interface {
+	ReadFrom(b []byte) (n int, addr net.Addr, err error)
+	WriteTo(b []byte, addr net.Addr) (n int, err error)
+}
+
+var conn ServeConn;
+
+var dhcpHandler = func(ch chan reqChan){
 
 	var leases[IP_Range]  linkedLease;
 	var qLastFreeL       *linkedLease; //    Queue-->
@@ -270,7 +281,7 @@ var dhcpHandler = func() dhcp.Handler{
 		if lease != nil { SetMAC(lease, mac); }
 		return lease;
 	};
-	var OldClient = func(lease *linkedLease) *linkedLease{
+	var OldClient = func(lease/*!nil*/ *linkedLease) *linkedLease{
 		//TODO: on debug "if lease.stage == IP_Free { panic("Bug#5464985"); }"
 		if lease.stage == IP_Issued { UniPutLease(lease, IP_Reserved); }
 		return lease;
@@ -290,7 +301,6 @@ var dhcpHandler = func() dhcp.Handler{
 	};
 
 
-	//TODO: clear nil pointer read in code
 	//TODO: exclude return (or set START_IP and range_ip) .0/24 (IP & mask = all zero) & .255/24 (IP & mask = all one) IPs
 	//TODO: создать очереди для n девайсов длинною n
 
@@ -299,156 +309,222 @@ var dhcpHandler = func() dhcp.Handler{
 	//TODO: Q: network IO is async?  A: No.
 
 
-	return dhcp.Handler{
-		ServeDHCP: func(req dhcp.Packet, msgType dhcp.MessageType, options dhcp.Options) dhcp.Packet {
+	var handler = func(req dhcp.Packet, msgType dhcp.MessageType, options dhcp.Options) dhcp.Packet {
 
-			/*
-			switch android, iPhone, PC, ...
-			*/
-			//req.
-			/*var leasesMobileIP = map[string] string{
-				"iPhone":"Apple",
-				"":"noname",
-			};
-			var leasesMobileMAC = map[string] string{
-				"iPhone":"Apple",
-				"":"noname",
-			};
-			var leasesPC;
-			log.Println(leases[string(bytes.SplitN(options[dhcp.OptionHostName],[]byte{'-'},2)[0])]);*/
+		return (map[dhcp.MessageType] func() dhcp.Packet{
+			dhcp.Discover: func() dhcp.Packet{
+				var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());
+				var reqIP = net.IP(options[dhcp.OptionRequestedIPAddress]);
 
-			return (map[dhcp.MessageType] func() dhcp.Packet{
-				dhcp.Discover: func() dhcp.Packet{
-					var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());
-					var reqIP = net.IP(options[dhcp.OptionRequestedIPAddress]);
+				if tr:=req.CIAddr(); reqIP == nil && !tr.Equal(zeroIP) { reqIP = tr; }
 
-					if tr:=req.CIAddr(); reqIP == nil && !tr.Equal(zeroIP) { reqIP = tr; }
+				if reqIP!=nil { if r:=dhcp.IPRange(START_IP, reqIP)-1; !(r>=0 && r<IP_Range) { reqIP=nil; } }
 
-					if reqIP!=nil { if r:=dhcp.IPRange(START_IP, reqIP)-1; !(r>=0 && r<IP_Range) { reqIP=nil; } }
+				var outIP net.IP;
 
-					var outIP net.IP;
+				var reqMACLease = clients[reqMAC];
 
-					var reqMACLease = clients[reqMAC];
-
-					switch {
-					case reqIP == nil && reqMACLease == nil: outIP = NewClient(LastFreeL(), reqMAC).IP();
-					case reqIP == nil && reqMACLease != nil: outIP = OldClient(reqMACLease).IP();
-					case reqIP != nil && reqMACLease == nil:
-						var reqIPLease = Lease(dhcp.IPRange(START_IP, reqIP)-1);
-						switch reqIPLease.stage {
-						case IP_Free:                outIP = NewClient(GetFreeL(reqIPLease), reqMAC).IP(); //use user IP
-						case IP_Reserved, IP_Issued: outIP = NewClient(LastFreeL(),          reqMAC).IP(); //try send another lease
-						}
-					case reqIP != nil && reqMACLease != nil:
-						var reqIPLease = Lease(dhcp.IPRange(START_IP, reqIP)-1);
-						if reqIPLease.mac == reqMAC {    outIP = OldClient(reqMACLease).IP();
-						}else{
-							switch reqIPLease.stage {
-							case IP_Free:                outIP = ReSetClient(reqIPLease, reqMAC, IP_Reserved).IP(); //move to user IP
-							case IP_Reserved, IP_Issued: outIP = OldClient(reqMACLease).IP();
-							}
-						}
+				switch {
+				case reqIP == nil && reqMACLease == nil: outIP = NewClient(LastFreeL(), reqMAC).IP();
+				case reqIP == nil && reqMACLease != nil: outIP = OldClient(reqMACLease).IP();
+				case reqIP != nil && reqMACLease == nil:
+					var reqIPLease = Lease(dhcp.IPRange(START_IP, reqIP)-1);
+					switch reqIPLease.stage {
+					case IP_Free:                outIP = NewClient(GetFreeL(reqIPLease), reqMAC).IP(); //use user IP
+					case IP_Reserved, IP_Issued: outIP = NewClient(LastFreeL(),          reqMAC).IP(); //try send another lease
 					}
-
-					if outIP != nil { return dhcp.ReplyPacket(req, dhcp.Offer, SERVER_IP, outIP, time.Hour, nil); }
-
-					return nil;
-					/*return dhcp.ReplyPacket(req, dhcp.Offer, SERVER_IP, clients[reqMAC],
-						h.options.SelectOrderOrAll(options[dhcp.OptionParameterRequestList]), nil);*/
-				},
-				dhcp.Request: func() dhcp.Packet{
-					var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());
-					var reqIP       = net.IP(options[dhcp.OptionRequestedIPAddress]);
-					var reqServerIP = net.IP(options[dhcp.OptionServerIdentifier]);
-
-					if tr:=req.CIAddr(); reqIP == nil && !tr.Equal(zeroIP) { reqIP = tr; }
-
-					//very buggy client
-					if reqServerIP == nil && reqIP == nil { return nil; }
-
-					//try correct
-					if reqServerIP == nil { reqServerIP = SERVER_IP; }
-					if reqIP == nil {
-						if reqIP = clients[reqMAC].IP(); reqIP == nil { return nil; }	//correct fail
-					}
-
-					var outIP net.IP;
-
-					var offsetIP = dhcp.IPRange(START_IP, reqIP)-1;
-					var reqIPInRange = offsetIP>=0 && offsetIP<IP_Range;
-					var reqMACInClients = clients[reqMAC] != nil;
-
-					switch {
-					case reqIPInRange && reqMACInClients:
-						var reqIPLease = Lease(offsetIP);
-						if reqIPLease.mac == reqMAC {										//TODO: test speed "Lease(offsetReqIP)==clients[reqMAC]" && "clients[reqMAC].lease.Equal(reqL)"
-							if reqIPLease.stage == IP_Reserved { GetReserveL(reqIPLease); }	//TODO: on debug "if reqIPLease.stage == IP_Free { panic("Bug#+5464985+"); }"
-							outIP = reqIP;
-						}else{
-							switch reqIPLease.stage {
-							case IP_Free:                outIP = ReSetClient(reqIPLease, reqMAC, IP_Issued).IP(); //move to user IP
-							case IP_Reserved, IP_Issued: outIP = DeleteClient(reqMAC);
-							}
-						}
-					case reqIPInRange && !reqMACInClients:
-						var reqIPLease = Lease(offsetIP);
-						switch reqIPLease.stage {
-						case IP_Free:                outIP = SetMAC(UniPutLease(UniRemoveLease(reqIPLease), IP_Issued), reqMAC).IP(); //use user IP
-						case IP_Reserved, IP_Issued: outIP = nil; //user broken off
-						}
-					case !reqIPInRange &&  reqMACInClients: outIP = DeleteClient(reqMAC);
-					case !reqIPInRange && !reqMACInClients: outIP = nil;
-					}
-
-					if reqServerIP.Equal(SERVER_IP) {
-						if outIP != nil { return dhcp.ReplyPacket(req, dhcp.ACK, SERVER_IP, outIP, time.Hour, nil);
-						}else           { return dhcp.ReplyPacket(req, dhcp.NAK, SERVER_IP, nil,   time.Hour, nil) }
-					}
-
-					return nil;
-				},
-				dhcp.Decline: func() dhcp.Packet{
-					var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());
-
-					if clients[reqMAC] != nil {
-						log.Println("leases conflict (Decline msg) - leases: " + clients[reqMAC].IP().String() + " MAC: " + net.HardwareAddr(reqMAC[:]).String());
-						DeleteClient(reqMAC);
-					}
-
-					return nil;
-				},
-				dhcp.Release: func() dhcp.Packet{
-					var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());
-					var reqIP  = req.CIAddr();
-
-					if reqIP.Equal(zeroIP) { reqIP = nil; }
-
-					if clients[reqMAC] != nil && !(reqIP != nil && !clients[reqMAC].IP().Equal(reqIP)) {
-						DeleteClient(reqMAC);
-					}
-
-					return nil;
-				},
-				dhcp.Inform: func() dhcp.Packet{
-					var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());
-					var reqIP  = req.CIAddr();
-
-					if clients[reqMAC].IP().Equal(reqIP) { // + "clients[reqMAC] != nil" :-)
-						return dhcp.ReplyPacket(req, dhcp.ACK, SERVER_IP, nil, 0, nil);
+				case reqIP != nil && reqMACLease != nil:
+					var reqIPLease = Lease(dhcp.IPRange(START_IP, reqIP)-1);
+					if reqIPLease.mac == reqMAC {    outIP = OldClient(reqMACLease).IP();
 					}else{
-						log.Println("Interesting (Inform msg)...");
+						switch reqIPLease.stage {
+						case IP_Free:                outIP = ReSetClient(reqIPLease, reqMAC, IP_Reserved).IP(); //move to user IP
+						case IP_Reserved, IP_Issued: outIP = OldClient(reqMACLease).IP();
+						}
 					}
+				}
 
-					return nil;
-				},
-			})[msgType]();
-		},
+				if outIP != nil { return dhcp.ReplyPacket(req, dhcp.Offer, SERVER_IP, outIP, time.Hour, nil); }
+
+				return nil;
+				/*return dhcp.ReplyPacket(req, dhcp.Offer, SERVER_IP, clients[reqMAC],
+					h.options.SelectOrderOrAll(options[dhcp.OptionParameterRequestList]), nil);*/
+			},
+			dhcp.Request: func() dhcp.Packet{
+				var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());
+				var reqIP       = net.IP(options[dhcp.OptionRequestedIPAddress]);
+				var reqServerIP = net.IP(options[dhcp.OptionServerIdentifier]);
+
+				if tr:=req.CIAddr(); reqIP == nil && !tr.Equal(zeroIP) { reqIP = tr; }
+
+				//very buggy client
+				if reqServerIP == nil && reqIP == nil { return nil; }
+
+				//try correct
+				if reqServerIP == nil { reqServerIP = SERVER_IP; }
+				if reqIP == nil {
+					if reqIP = clients[reqMAC].IP(); reqIP == nil { return nil; }	//correct fail
+				}
+
+				var outIP net.IP;
+
+				var offsetIP = dhcp.IPRange(START_IP, reqIP)-1;
+				var reqIPInRange = offsetIP>=0 && offsetIP<IP_Range;
+				var reqMACInClients = clients[reqMAC] != nil;
+
+				switch {
+				case reqIPInRange && reqMACInClients:
+					var reqIPLease = Lease(offsetIP);
+					if reqIPLease.mac == reqMAC {										//TODO: test speed "Lease(offsetReqIP)==clients[reqMAC]" && "clients[reqMAC].lease.Equal(reqL)"
+						if reqIPLease.stage == IP_Reserved { GetReserveL(reqIPLease); }	//TODO: on debug "if reqIPLease.stage == IP_Free { panic("Bug#+5464985+"); }"
+						outIP = reqIP;
+					}else{
+						switch reqIPLease.stage {
+						case IP_Free:                outIP = ReSetClient(reqIPLease, reqMAC, IP_Issued).IP(); //move to user IP
+						case IP_Reserved, IP_Issued: outIP = DeleteClient(reqMAC);
+						}
+					}
+				case reqIPInRange && !reqMACInClients:
+					var reqIPLease = Lease(offsetIP);
+					switch reqIPLease.stage {
+					case IP_Free:                outIP = SetMAC(UniPutLease(UniRemoveLease(reqIPLease), IP_Issued), reqMAC).IP(); //use user IP
+					case IP_Reserved, IP_Issued: outIP = nil; //user broken off
+					}
+				case !reqIPInRange &&  reqMACInClients: outIP = DeleteClient(reqMAC);
+				case !reqIPInRange && !reqMACInClients: outIP = nil;
+				}
+
+				if reqServerIP.Equal(SERVER_IP) {
+					if outIP != nil { return dhcp.ReplyPacket(req, dhcp.ACK, SERVER_IP, outIP, time.Hour, nil);
+					}else           { return dhcp.ReplyPacket(req, dhcp.NAK, SERVER_IP, nil,   time.Hour, nil) }
+				}
+
+				return nil;
+			},
+			dhcp.Decline: func() dhcp.Packet{
+				var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());
+
+				if clients[reqMAC] != nil {
+					log.Println("leases conflict (Decline msg) - leases: " + clients[reqMAC].IP().String() + " MAC: " + net.HardwareAddr(reqMAC[:]).String());
+					DeleteClient(reqMAC);
+				}
+
+				return nil;
+			},
+			dhcp.Release: func() dhcp.Packet{
+				var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());
+				var reqIP  = req.CIAddr();
+
+				if reqIP.Equal(zeroIP) { reqIP = nil; }
+
+				if clients[reqMAC] != nil && !(reqIP != nil && !clients[reqMAC].IP().Equal(reqIP)) {
+					DeleteClient(reqMAC);
+				}
+
+				return nil;
+			},
+			dhcp.Inform: func() dhcp.Packet{
+				var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());
+				var reqIP  = req.CIAddr();
+
+				if clients[reqMAC].IP().Equal(reqIP) { // + "clients[reqMAC] != nil" :-)
+					return dhcp.ReplyPacket(req, dhcp.ACK, SERVER_IP, nil, 0, nil);
+				}else{
+					log.Println("Interesting (Inform msg)...");
+				}
+
+				return nil;
+			},
+		})[msgType]();
 	};
-}();
+
+	var serveOut = func(req dhcp.Packet, res dhcp.Packet, addr net.Addr) error {
+		if res != nil {
+			// If IP not available, broadcast
+			ipStr, portStr, err := net.SplitHostPort(addr.String())
+			if err != nil {
+				return err
+			}
+
+			if net.ParseIP(ipStr).Equal(net.IPv4zero) || req.Broadcast() {
+				port, _ := strconv.Atoi(portStr)
+				addr = &net.UDPAddr{IP: net.IPv4bcast, Port: port}
+			}
+			if _, e := conn.WriteTo(res, addr); e != nil {
+				return e
+			}
+		}
+		return nil;
+	};
+
+	for{
+		var reqCh = <- ch;
+		serveOut(reqCh.req, handler(reqCh.req, reqCh.reqType, reqCh.options), reqCh.addr);
+	}
+};
+
+
+
+type reqChan struct{
+	req dhcp.Packet;
+	reqType dhcp.MessageType;
+	options dhcp.Options;
+	addr net.Addr;
+}
+
 
 func main() {
-	fmt.Printf("Hello world!");
+	fmt.Printf("Hello LAN!");
+
+	var dhcpCM = map[[2]byte]chan reqChan{
+
+	}
 
 
-	for{ log.Println(dhcp.ListenAndServe(dhcpHandler)); }
+	var dhcpDCh = make(chan reqChan, 4);
+	go dhcpHandler(dhcpDCh);
+
+	for{
+		log.Println(func() error{
+			l, err := net.ListenPacket("udp4", ":67")
+			if err != nil {
+				return err
+			}
+			defer l.Close()
+
+			conn = l;
+
+
+			buffer := make([]byte, 1500)
+			for{
+				n, addr, err := conn.ReadFrom(buffer)
+				if err != nil {
+					return err
+				}
+				if n < 240 { // Packet too small to be DHCP
+					continue
+				}
+				req := dhcp.Packet(buffer[:n])
+				if req.HLen() > 16 { // Invalid size
+					continue
+				}
+				options := req.ParseOptions()
+				var reqType dhcp.MessageType
+				if t := options[dhcp.OptionDHCPMessageType]; len(t) != 1 {
+					continue
+				} else {
+					reqType = dhcp.MessageType(t[0])
+					if reqType < dhcp.Discover || reqType > dhcp.Inform {
+						continue
+					}
+				}
+
+				/*log.Println(leases[string(bytes.SplitN(options[dhcp.OptionHostName],[]byte{'-'},2)[0])]);*/
+				var hostName [2]byte; copy(hostName[:],options[dhcp.OptionHostName][:2]);
+				var ch = dhcpCM[hostName];
+				if ch == nil { ch = dhcpDCh; }
+				ch <- reqChan{req, reqType, options, addr};
+			}
+	}())}
+
 }
