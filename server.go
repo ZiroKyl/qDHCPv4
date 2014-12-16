@@ -149,21 +149,24 @@ type reqChan struct{
 type DhcpHandler struct{
 	qLastFreeL         *linkedLease; //    Queue-->
 	qFirstFreeL        *linkedLease; // -->Queue
-	firstReserveL      *linkedLease;
+	qFirstReserveL     *linkedLease;
+	qLastReserveL      *linkedLease;
 
 	_CONN      *ServeConn;
 	_SERVER_IP  net.IP;
 	_START_IP   net.IP;
+	_OPTIONS    dhcp.Options;
 
-	channelReq <-chan reqChan;
+	channelReq <-chan reqChan;/*don't close()*/
 
 	leases            []linkedLease;
 	clients map[MAC48] *linkedLease;
 }
-func(H *DhcpHandler) Init(conn *ServeConn, serverIP, startIP net.IP, rangeIP int, channelReq/*don't close()*/ <-chan reqChan){
+func(H *DhcpHandler) Init(conn *ServeConn, serverIP, startIP net.IP, rangeIP int, options dhcp.Options, channelReq/*don't close()*/ <-chan reqChan){
 	H._CONN      = conn;
 	H._SERVER_IP = serverIP;
 	H._START_IP  = startIP;
+	H._OPTIONS   = options;
 
 	H.channelReq = channelReq;
 
@@ -190,19 +193,38 @@ func(H *DhcpHandler) Init(conn *ServeConn, serverIP, startIP net.IP, rangeIP int
 
 		H.qLastFreeL    = &H.leases[0];
 		H.qFirstFreeL   = &H.leases[len(H.leases)-1];
-		H.firstReserveL =  nil;
+		H.qFirstReserveL = nil;
+		H.qLastReserveL  = nil;
 	}//Init leases end
 }
 func(H *DhcpHandler) GoHandle(){
-	for req := range H.channelReq {
-		H.serveOut(req.req, H.Handler(req.req, req.reqType, req.options), req.addr);
+	var dEmptyReserve    = len(H.leases)*5*time.Millisecond;
+	var dNotEmptyReserve =               5*time.Millisecond;
+	
+	var durClearReserve = dEmptyReserve;
+	for{
+		select{
+		case req := <- H.channelReq:
+			H.serveOut(req.req, H.Handler(req.req, req.reqType, req.options), req.addr);
+
+		//clear old Discover-Offer leases on timeout
+		case <- time.After(durClearReserve):
+			if H.qLastReserveL != nil { // time to Request lease = 0..durClearReserve
+				H.UniPutLease(H.UniRemoveLease(H.qLastReserveL), IP_Free);
+				H.DeleteMAC(H.qLastReserveL.mac);
+
+				durClearReserve = dNotEmptyReserve;
+			}else{
+				durClearReserve = dEmptyReserve;
+			}
+		}
 	}
 }
 
 func(H *DhcpHandler) Lease(offset int) *linkedLease{
 	return &H.leases[offset];
 }
-func(DhcpHandler) removeLease(lease/*!nil*/ *linkedLease, firstLease, lastLease **linkedLease/**(nil),!=*/){
+func(  *DhcpHandler) removeLease(lease/*!nil*/ *linkedLease, firstLease, lastLease **linkedLease/**(nil),!=*/){
 	lease.stage = IP_Removed;
 
 	if lease.nextL != nil { lease.nextL.pervL = lease.pervL; }
@@ -214,7 +236,7 @@ func(DhcpHandler) removeLease(lease/*!nil*/ *linkedLease, firstLease, lastLease 
 	lease.pervL = nil;
 	lease.nextL = nil;
 }
-func(DhcpHandler) putLease(lease/*!nil*/ *linkedLease, firstLease, lastLease **linkedLease/**(!nil),==*/, stage IPStage){
+func(  *DhcpHandler) putLease(lease/*!nil*/ *linkedLease, firstLease, lastLease **linkedLease/**(!nil),==*/, stage IPStage){
 	lease.pervL = nil;
 	lease.nextL = *firstLease;
 
@@ -227,7 +249,7 @@ func(DhcpHandler) putLease(lease/*!nil*/ *linkedLease, firstLease, lastLease **l
 func(H *DhcpHandler) GetFreeL(reqL/*!nil*/ *linkedLease) (freeL *linkedLease){
 	H.removeLease(reqL, &H.qFirstFreeL, &H.qLastFreeL);
 	freeL = reqL;
-	H.putLease(freeL, &H.firstReserveL, &H.firstReserveL, IP_Reserved);
+	H.putLease(freeL, &H.qFirstReserveL, &H.qLastReserveL, IP_Reserved);
 
 	return;
 }
@@ -240,7 +262,7 @@ func(H *DhcpHandler) LastFreeL() (freeL *linkedLease){
 func(H *DhcpHandler) GetReserveL(resL/*!nil*/ *linkedLease) (issuedL *linkedLease){
 	var nilL *linkedLease;
 
-	H.removeLease(resL, &H.firstReserveL, &nilL);
+	H.removeLease(resL, &H.qFirstReserveL, &H.qLastReserveL);
 	issuedL = resL;
 	issuedL.stage = IP_Issued;
 
@@ -250,18 +272,16 @@ func(H *DhcpHandler) GetReserveL(resL/*!nil*/ *linkedLease) (issuedL *linkedLeas
 //	H.putLease(issuedL, &H.qFirstFreeL, &H.qLastFreeL, IP_Free);
 //}
 func(H *DhcpHandler) UniRemoveLease(lease/*!nil*/ *linkedLease)  *linkedLease{
-	var nilL *linkedLease;
-
 	switch lease.stage {
-	case IP_Free:     H.removeLease(lease, &H.qFirstFreeL,   &H.qLastFreeL);
-	case IP_Reserved: H.removeLease(lease, &H.firstReserveL, &nilL        );
+	case IP_Free:     H.removeLease(lease, &H.qFirstFreeL,    &H.qLastFreeL);
+	case IP_Reserved: H.removeLease(lease, &H.qFirstReserveL, &H.qLastReserveL);
 	}
 	return lease;
 };
 func(H *DhcpHandler) UniPutLease(lease/*!nil*/ *linkedLease, stage IPStage) *linkedLease{
 	switch stage {
-	case IP_Reserved: H.putLease(lease, &H.firstReserveL, &H.firstReserveL, IP_Reserved);
-	case IP_Free:     H.putLease(lease, &H.qFirstFreeL,   &H.qLastFreeL,    IP_Free);
+	case IP_Reserved: H.putLease(lease, &H.qFirstReserveL, &H.qLastReserveL, IP_Reserved);
+	case IP_Free:     H.putLease(lease, &H.qFirstFreeL,    &H.qLastFreeL,    IP_Free);
 	}
 	return lease;
 }
@@ -336,11 +356,12 @@ func(H *DhcpHandler) Handler(req dhcp.Packet, msgType dhcp.MessageType, options 
 					}
 				}
 
-				if outIP != nil { return dhcp.ReplyPacket(req, dhcp.Offer, H._SERVER_IP, outIP, time.Hour, nil); }
+				if outIP != nil {
+					return dhcp.ReplyPacket(req, dhcp.Offer, H._SERVER_IP, outIP, time.Hour,
+											H._OPTIONS.SelectOrderOrAll(options[dhcp.OptionParameterRequestList]));//TODO: сделать также и в остальных местах
+				}
 
 				return nil;
-				/*return dhcp.ReplyPacket(req, dhcp.Offer, H._SERVER_IP, clients[reqMAC],
-					h.options.SelectOrderOrAll(options[dhcp.OptionParameterRequestList]), nil);*/
 			},
 			dhcp.Request: func() dhcp.Packet{
 				var reqMAC MAC48; copy(reqMAC[:], req.CHAddr());

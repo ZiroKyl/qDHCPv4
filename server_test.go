@@ -2,9 +2,9 @@ package main
 
 import(
 	"testing"
-	"net"
+	//"net"
 
-	dhcp "github.com/krolaw/dhcp4"
+	//dhcp "github.com/krolaw/dhcp4"
 )
 
 func output(msgType dhcp.MessageType, mac net.HardwareAddr, IAddr net.IP, options dhcp.Options) dhcp.Packet{
@@ -326,5 +326,6 @@ func BenchmarkDhcpHandler_0(b *testing.B){	//-benchtime 0.005s: 5000 ns/op 1230 
 		packet.SetCHAddr(mac);
 	}
 }
+
 
 //TODO: map vs switch-case

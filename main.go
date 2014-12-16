@@ -29,7 +29,7 @@ import(
 //TODO: test speed: Go-style (struct) vs JavaScript-style (func+closure)
 
 //TODO: выдавать нормальные опции (шлюз, маска, ...)
-//TODO: clear old Discover-Offer leases on timeout
+
 //TODO: minimize load: lease_time += ip_offset
 //TODO: Q: network IO is async?  A: No.
 
@@ -42,13 +42,20 @@ func main() {
 	var defaultChanHandler              chan<-reqChan;
 
 	// rule: len(device)==n && len(chan)==n
-	{   // for parallel run rewrite to new(DhcpHandler) OR (better) store in DhcpHandler{} const fields and
+	{
+		var dhcpOptions = dhcp.Options{
+			dhcp.OptionSubnetMask:       []byte{255, 255,  0, 0},
+			dhcp.OptionRouter:           []byte{194, 188, 64, 8},
+			dhcp.OptionDomainNameServer: []byte{194, 188, 64, 8},
+		}
+
+		// for parallel run rewrite to new(DhcpHandler) OR (better) store in DhcpHandler{} const fields and
 		// create (new()) in Init() writable fields
 		var Handlers = make([]struct{cReq chan <-reqChan; hDhcp DhcpHandler}, 4);
-		{ cTemp := make(chan reqChan, 4); Handlers[0].cReq = cTemp; Handlers[0].hDhcp.Init(&conn, net.IP{194, 188, 64, 28}, net.IP{194, 188, 32, 1}, 1024, cTemp); }
-		{ cTemp := make(chan reqChan, 4); Handlers[1].cReq = cTemp; Handlers[1].hDhcp.Init(&conn, net.IP{194, 188, 64, 28}, net.IP{194, 188, 36, 1}, 1024, cTemp); }
-		{ cTemp := make(chan reqChan, 4); Handlers[2].cReq = cTemp; Handlers[2].hDhcp.Init(&conn, net.IP{194, 188, 64, 28}, net.IP{194, 188, 40, 1}, 1024, cTemp); }
-		{ cTemp := make(chan reqChan, 4); Handlers[3].cReq = cTemp; Handlers[3].hDhcp.Init(&conn, net.IP{194, 188, 64, 28}, net.IP{194, 188, 44, 1}, 1024, cTemp); }
+		{ cTemp := make(chan reqChan, 4); Handlers[0].cReq = cTemp; Handlers[0].hDhcp.Init(&conn, net.IP{194, 188, 64, 28}, net.IP{194, 188, 32, 1}, 1024, dhcpOptions, cTemp); }
+		{ cTemp := make(chan reqChan, 4); Handlers[1].cReq = cTemp; Handlers[1].hDhcp.Init(&conn, net.IP{194, 188, 64, 28}, net.IP{194, 188, 36, 1}, 1024, dhcpOptions, cTemp); }
+		{ cTemp := make(chan reqChan, 4); Handlers[2].cReq = cTemp; Handlers[2].hDhcp.Init(&conn, net.IP{194, 188, 64, 28}, net.IP{194, 188, 40, 1}, 1024, dhcpOptions, cTemp); }
+		{ cTemp := make(chan reqChan, 4); Handlers[3].cReq = cTemp; Handlers[3].hDhcp.Init(&conn, net.IP{194, 188, 64, 28}, net.IP{194, 188, 44, 1}, 1024, dhcpOptions, cTemp); }
 
 		deviceChanHandlers = map[[2]byte] chan <-reqChan{
 			[2]byte{'a', 'n'}: Handlers[1].cReq,
