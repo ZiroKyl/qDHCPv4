@@ -152,21 +152,27 @@ type DhcpHandler struct{
 	qFirstReserveL     *linkedLease;
 	qLastReserveL      *linkedLease;
 
-	_CONN      *ServeConn;
-	_SERVER_IP  net.IP;
-	_START_IP   net.IP;
-	_OPTIONS    dhcp.Options;
+	iCurrTLeaseEnd int;
+
+	_CONN         *ServeConn;
+	_SERVER_IP     net.IP;
+	_START_IP      net.IP;
+	_OPTIONS       dhcp.Options;
+	_T_LEASE_END []int16;
 
 	channelReq <-chan reqChan;/*don't close()*/
 
 	leases            []linkedLease;
 	clients map[MAC48] *linkedLease;
 }
-func(H *DhcpHandler) Init(conn *ServeConn, serverIP, startIP net.IP, rangeIP int, options dhcp.Options, channelReq/*don't close()*/ <-chan reqChan){
-	H._CONN      = conn;
-	H._SERVER_IP = serverIP;
-	H._START_IP  = startIP;
-	H._OPTIONS   = options;
+func(H *DhcpHandler) Init(conn *ServeConn, serverIP, startIP net.IP, rangeIP int, options dhcp.Options, tLeaseEnd []int16, channelReq/*don't close()*/ <-chan reqChan){
+	H._CONN        = conn;
+	H._SERVER_IP   = serverIP;
+	H._START_IP    = startIP;
+	H._OPTIONS     = options;
+	H._T_LEASE_END = tLeaseEnd;
+
+	H.iCurrTLeaseEnd = 0;
 
 	H.channelReq = channelReq;
 
@@ -322,6 +328,25 @@ func(H *DhcpHandler) DeleteClient(mac MAC48) net.IP{
 }
 
 
+func(H *DhcpHandler) NextTLeaseEnd() int{
+	return (H.iCurrTLeaseEnd+1)%len(H._T_LEASE_END);
+}
+func(H *DhcpHandler) LeaseDuration(ip net.IP) time.Duration{
+	var tNow = time.Now().Local();
+	var tNowM = tNow.Hour()*60 + tNow.Minute();
+
+	// correct iCurrTLeaseEnd
+	for _ := range H._T_LEASE_END {
+		if H._T_LEASE_END[H.iCurrTLeaseEnd] <= tNowM && H._T_LEASE_END[NextTLeaseEnd()] > tNowM {
+			break;
+		}
+		H.iCurrTLeaseEnd = NextTLeaseEnd());
+	}
+
+	//minimize load: lease_time += ip_offset
+	return (H._T_LEASE_END[NextTLeaseEnd()]-tNowM)*time.Minute + (dhcp.IPRange(H._START_IP, ip)*60)/len(H.leases)*time.Second;
+}
+
 func(H *DhcpHandler) Handler(req dhcp.Packet, msgType dhcp.MessageType, options dhcp.Options) dhcp.Packet {
 	return (map[dhcp.MessageType] func() dhcp.Packet{
 			dhcp.Discover: func() dhcp.Packet{
@@ -357,8 +382,8 @@ func(H *DhcpHandler) Handler(req dhcp.Packet, msgType dhcp.MessageType, options 
 				}
 
 				if outIP != nil {
-					return dhcp.ReplyPacket(req, dhcp.Offer, H._SERVER_IP, outIP, time.Hour,
-											H._OPTIONS.SelectOrderOrAll(options[dhcp.OptionParameterRequestList]));//TODO: сделать также и в остальных местах
+					return dhcp.ReplyPacket(req, dhcp.Offer, H._SERVER_IP, outIP, LeaseDuration(outIP),
+											H._OPTIONS.SelectOrderOrAll(options[dhcp.OptionParameterRequestList]));
 				}
 
 				return nil;
@@ -408,8 +433,9 @@ func(H *DhcpHandler) Handler(req dhcp.Packet, msgType dhcp.MessageType, options 
 				}
 
 				if reqServerIP.Equal(H._SERVER_IP) {
-					if outIP != nil { return dhcp.ReplyPacket(req, dhcp.ACK, H._SERVER_IP, outIP, time.Hour, nil);
-					}else           { return dhcp.ReplyPacket(req, dhcp.NAK, H._SERVER_IP, nil,   time.Hour, nil) }
+					if outIP != nil { return dhcp.ReplyPacket(req, dhcp.ACK, H._SERVER_IP, outIP, LeaseDuration(outIP),
+						                                      H._OPTIONS.SelectOrderOrAll(options[dhcp.OptionParameterRequestList]));
+					}else           { return dhcp.ReplyPacket(req, dhcp.NAK, H._SERVER_IP, nil,   0, nil) }
 				}
 
 				return nil;
@@ -441,7 +467,7 @@ func(H *DhcpHandler) Handler(req dhcp.Packet, msgType dhcp.MessageType, options 
 				var reqIP  = req.CIAddr();
 
 				if H.clients[reqMAC].IP().Equal(reqIP) { // + "clients[reqMAC] != nil" :-)
-					return dhcp.ReplyPacket(req, dhcp.ACK, H._SERVER_IP, nil, 0, nil);
+					return dhcp.ReplyPacket(req, dhcp.ACK, H._SERVER_IP, nil, 0, H._OPTIONS.SelectOrderOrAll(options[dhcp.OptionParameterRequestList]));
 				}else{
 					log.Println("Interesting (Inform msg)...");
 				}
