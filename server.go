@@ -118,11 +118,12 @@ const (
 )
 
 type linkedLease struct{
-	stage   IPStage;
-	ip      net.IP;
-	mac	    MAC48;
-	pervL  *linkedLease;
-	nextL  *linkedLease;
+	stage    IPStage;
+	ip       net.IP;
+	mac	     MAC48;
+	updated  bool;	//need on tLeaseEnd
+	pervL   *linkedLease;
+	nextL   *linkedLease;
 };
 
 func(L *linkedLease) IP() net.IP{
@@ -206,12 +207,48 @@ func(H *DhcpHandler) Init(conn *ServeConn, serverIP, startIP net.IP, rangeIP int
 func(H *DhcpHandler) GoHandle(){
 	var dEmptyReserve    = len(H.leases)*5*time.Millisecond;
 	var dNotEmptyReserve =               5*time.Millisecond;
-	
+
 	var durClearReserve = dEmptyReserve;
+
+	var tNow = time.Now().Local();
+	var tNowM = tNow.Hour() * 60 + tNow.Minute();
+
+	correctICurrTLeaseEnd(tNowM);
+
+	var durClearIssued = time.Duration(modOneDay(H._T_LEASE_END[NextTLeaseEnd()]-tNowM))*time.Minute;
+	var tClearIssuedStage = -40*time.Second;
 	for{
 		select{
-		case req := <- H.channelReq:
-			H.serveOut(req.req, H.Handler(req.req, req.reqType, req.options), req.addr);
+		// clear old Issued leases on schedule
+		case <- time.After(durClearIssued + tClearIssuedStage):
+			switch(tClearIssuedStage){
+			//set update=false on Issued leases
+			case -40*time.Second:
+				for l := range H.leases{
+					if l.stage == IP_Issued {
+						l.update = false;
+					}
+				}
+
+				durClearIssued = 40*time.Second;
+				tClearIssuedStage = 1*time.Minute + 20*time.Second;
+			//delete Issued leases if update=false
+			case 1*time.Minute + 20*time.Second:
+				for l := range H.leases{
+					if l.stage == IP_Issued && l.update == false {
+						DeleteClient(l);
+					}
+				}
+
+				tNow = time.Now().Local();
+				tNowM = tNow.Hour() * 60 + tNow.Minute();
+
+				correctICurrTLeaseEnd(tNowM);
+
+				durClearIssued = time.Duration(modOneDay(H._T_LEASE_END[NextTLeaseEnd()]-tNowM))*time.Minute;
+				tClearIssuedStage = -40*time.Second;
+			}
+
 
 		//clear old Discover-Offer leases on timeout
 		case <- time.After(durClearReserve):
@@ -223,6 +260,9 @@ func(H *DhcpHandler) GoHandle(){
 			}else{
 				durClearReserve = dEmptyReserve;
 			}
+
+		case req := <- H.channelReq:
+			H.serveOut(req.req, H.Handler(req.req, req.reqType, req.options), req.addr);
 		}
 	}
 }
@@ -326,25 +366,37 @@ func(H *DhcpHandler) DeleteClient(mac MAC48) net.IP{
 
 	return nil;
 }
+func(H *DhcpHandler) DeleteClient(lease/*!nil*/ *linkedLease) net.IP{
+	//TODO: on debug "if H.clients[mac].stage == IP_Free { panic("Bug#-5464985-"); }"
+	H.UniPutLease(H.UniRemoveLease(lease), IP_Free);
+	H.DeleteMAC(lease.mac);
 
-
-func(H *DhcpHandler) NextTLeaseEnd() int{
-	return (H.iCurrTLeaseEnd+1)%len(H._T_LEASE_END);
+	return nil;
 }
-func(H *DhcpHandler) LeaseDuration(ip net.IP) time.Duration{
-	var tNow = time.Now().Local();
-	var tNowM = tNow.Hour()*60 + tNow.Minute();
 
-	// correct iCurrTLeaseEnd
+
+func(H *DhcpHandler) correctICurrTLeaseEnd(tNowM time.Duration){
 	for _ := range H._T_LEASE_END {
 		if H._T_LEASE_END[H.iCurrTLeaseEnd] <= tNowM && H._T_LEASE_END[NextTLeaseEnd()] > tNowM {
 			break;
 		}
 		H.iCurrTLeaseEnd = NextTLeaseEnd());
 	}
+}
+func(H *DhcpHandler) NextTLeaseEnd() int{
+	return (H.iCurrTLeaseEnd+1)%len(H._T_LEASE_END);
+}
+func modOneDay(minutes int) int{
+	return (24*60+minutes)%(24*60);
+}
+func(H *DhcpHandler) LeaseDuration(ip net.IP) time.Duration{
+	var tNow = time.Now().Local();
+	var tNowM = tNow.Hour()*60 + tNow.Minute();
+
+	correctICurrTLeaseEnd(tNowM);
 
 	//minimize load: lease_time += ip_offset
-	return (H._T_LEASE_END[NextTLeaseEnd()]-tNowM)*time.Minute + (dhcp.IPRange(H._START_IP, ip)*60)/len(H.leases)*time.Second;
+	return time.Duration(modOneDay(H._T_LEASE_END[NextTLeaseEnd()]-tNowM))*time.Minute + (dhcp.IPRange(H._START_IP, ip)*60)/len(H.leases)*time.Second;
 }
 
 func(H *DhcpHandler) Handler(req dhcp.Packet, msgType dhcp.MessageType, options dhcp.Options) dhcp.Packet {
@@ -433,7 +485,8 @@ func(H *DhcpHandler) Handler(req dhcp.Packet, msgType dhcp.MessageType, options 
 				}
 
 				if reqServerIP.Equal(H._SERVER_IP) {
-					if outIP != nil { return dhcp.ReplyPacket(req, dhcp.ACK, H._SERVER_IP, outIP, LeaseDuration(outIP),
+					if outIP != nil { H.clients[reqMAC].updated = true; //need on tLeaseEnd
+						              return dhcp.ReplyPacket(req, dhcp.ACK, H._SERVER_IP, outIP, LeaseDuration(outIP),
 						                                      H._OPTIONS.SelectOrderOrAll(options[dhcp.OptionParameterRequestList]));
 					}else           { return dhcp.ReplyPacket(req, dhcp.NAK, H._SERVER_IP, nil,   0, nil) }
 				}

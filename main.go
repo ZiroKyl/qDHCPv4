@@ -28,8 +28,8 @@ import(
 //TODO: создать отдельный пакет CLI/main и qDHCPv4
 //TODO: test speed: Go-style (struct) vs JavaScript-style (func+closure)
 
-//TODO: добавить очистку выданных IP
 //TODO: выдавать нормальные опции (шлюз, маска, ...)
+//TODO: подправить тесты
 
 //TODO: Q: network IO is async?  A: No.
 
