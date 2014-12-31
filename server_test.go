@@ -2,13 +2,15 @@ package main
 
 import(
 	"testing"
-	//"net"
+	"net"
 
-	//dhcp "github.com/krolaw/dhcp4"
+	dhcp "github.com/krolaw/dhcp4"
 )
 
-func output(msgType dhcp.MessageType, mac net.HardwareAddr, IAddr net.IP, options dhcp.Options) dhcp.Packet{
-	return dhcpHandler.ServeDHCP(dhcp.RequestPacket(msgType, mac, IAddr, []byte{1,2,3,4}, true, options.SelectOrderOrAll(nil)), msgType, options);
+var SERVER_IP = net.IP{194, 188, 64, 28};
+
+func output(hDhcp *DhcpHandler, msgType dhcp.MessageType, mac net.HardwareAddr, IAddr net.IP, options dhcp.Options) dhcp.Packet{
+	return hDhcp.Handler(dhcp.RequestPacket(msgType, mac, IAddr, []byte{1,2,3,4}, true, options.SelectOrderOrAll(nil)), msgType, options);
 }
 
 type tsOut struct{
@@ -300,8 +302,24 @@ func TestDhcpHandler_0(t *testing.T){
 		},
 	}
 
+
+	var dhcpOptions = dhcp.Options{
+		dhcp.OptionSubnetMask:       []byte{255, 255,  0, 0},
+		dhcp.OptionRouter:           []byte{194, 188, 64, 8},
+		dhcp.OptionDomainNameServer: []byte{194, 188, 64, 8},
+	}
+
+	var tLeaseEnd = []int16{
+				11*60 + 35,
+				12*60 + 50,
+				13*60 + 05,
+	};
+
+	var hDhcp DhcpHandler;
+	{ cTemp := make(chan reqChan, 4); hDhcp.Init(nil, net.IP{194, 188, 64, 28}, net.IP{194, 188, 32, 1}, 1024, dhcpOptions, tLeaseEnd, cTemp); }
+
 	for i,s := range smpls {
-		outCheck(output(s.in.msgType, s.in.mac, s.in.IAddr, dhcp.Options{
+		outCheck(output(&hDhcp, s.in.msgType, s.in.mac, s.in.IAddr, dhcp.Options{
 			dhcp.OptionRequestedIPAddress: s.in.reqIP,
 			dhcp.OptionServerIdentifier:   s.in.serverIP,
 		}), s.out, i, t);
@@ -311,6 +329,7 @@ func TestDhcpHandler_0(t *testing.T){
 }
 
 func BenchmarkDhcpHandler_0(b *testing.B){	//-benchtime 0.005s: 5000 ns/op 1230 B/op 11 allocs/op
+											//                   6010 ns/op 1230 B/op 13 allocs/op
 	var mac  = net.HardwareAddr{1, 2, 3, 4, 5, 6};
 	var opt  = dhcp.Options{};
 	var opts = opt.SelectOrderOrAll(nil);
@@ -318,10 +337,25 @@ func BenchmarkDhcpHandler_0(b *testing.B){	//-benchtime 0.005s: 5000 ns/op 1230 
 
 	var packet = dhcp.RequestPacket(dhcp.Discover, mac, nil, xId, true, opts);
 
+	var dhcpOptions = dhcp.Options{
+		dhcp.OptionSubnetMask:       []byte{255, 255,  0, 0},
+		dhcp.OptionRouter:           []byte{194, 188, 64, 8},
+		dhcp.OptionDomainNameServer: []byte{194, 188, 64, 8},
+	}
+
+	var tLeaseEnd = []int16{
+				11*60 + 35,
+				12*60 + 50,
+				13*60 + 05,
+	};
+
+	var hDhcp DhcpHandler;
+	{ cTemp := make(chan reqChan, 4); hDhcp.Init(nil, net.IP{194, 188, 64, 28}, net.IP{194, 188, 32, 1}, 1024, dhcpOptions, tLeaseEnd, cTemp); }
+
 	b.ResetTimer();
 	for i:=0;i<b.N;i++ {
 		//output(dhcp.Discover, mac, nil, opt);
-		dhcpHandler.ServeDHCP(packet, dhcp.Discover, opt);
+		hDhcp.Handler(packet, dhcp.Discover, opt);
 		mac[0]++;
 		packet.SetCHAddr(mac);
 	}

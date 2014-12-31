@@ -25,12 +25,13 @@ import(
 // http://www.ingmarverheij.com/microsoft-vendor-specific-dhcp-options-explained-and-demystified/
 
 
+//TODO: config to JSON
 //TODO: exclude return (or set H._START_IP and range_ip) .0/24 (IP & mask = all zero) & .255/24 (IP & mask = all one) IPs
+//TODO: check delta tLeaseEnd > 2*(40sec + 60sec + 20sec)
 //TODO: создать отдельный пакет CLI/main и qDHCPv4
 //TODO: test speed: Go-style (struct) vs JavaScript-style (func+closure)
 
 //TODO: выдавать нормальные опции (шлюз, маска, ...)
-//TODO: подправить тесты
 
 //TODO: Q: network IO is async?  A: No.
 
