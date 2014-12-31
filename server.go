@@ -205,17 +205,17 @@ func(H *DhcpHandler) Init(conn *ServeConn, serverIP, startIP net.IP, rangeIP int
 	}//Init leases end
 }
 func(H *DhcpHandler) GoHandle(){
-	var dEmptyReserve    = len(H.leases)*5*time.Millisecond;
-	var dNotEmptyReserve =               5*time.Millisecond;
+	var dEmptyReserve    = time.Duration(len(H.leases))*5*time.Millisecond;
+	var dNotEmptyReserve =                              5*time.Millisecond;
 
 	var durClearReserve = dEmptyReserve;
 
 	var tNow = time.Now().Local();
 	var tNowM = tNow.Hour() * 60 + tNow.Minute();
 
-	correctICurrTLeaseEnd(tNowM);
+	H.correctICurrTLeaseEnd(tNowM);
 
-	var durClearIssued = time.Duration(modOneDay(H._T_LEASE_END[NextTLeaseEnd()]-tNowM))*time.Minute;
+	var durClearIssued = time.Duration(modOneDay(int(H._T_LEASE_END[H.NextTLeaseEnd()])-tNowM))*time.Minute;
 	var tClearIssuedStage = -40*time.Second;
 	for{
 		select{
@@ -224,9 +224,9 @@ func(H *DhcpHandler) GoHandle(){
 			switch(tClearIssuedStage){
 			//set update=false on Issued leases
 			case -40*time.Second:
-				for l := range H.leases{
+				for _,l := range H.leases{
 					if l.stage == IP_Issued {
-						l.update = false;
+						l.updated = false;
 					}
 				}
 
@@ -234,18 +234,18 @@ func(H *DhcpHandler) GoHandle(){
 				tClearIssuedStage = 1*time.Minute + 20*time.Second;
 			//delete Issued leases if update=false
 			case 1*time.Minute + 20*time.Second:
-				for l := range H.leases{
-					if l.stage == IP_Issued && l.update == false {
-						DeleteClient(l);
+				for _,l := range H.leases{
+					if l.stage == IP_Issued && l.updated == false {
+						H.DeleteClientL(&l);
 					}
 				}
 
 				tNow = time.Now().Local();
 				tNowM = tNow.Hour() * 60 + tNow.Minute();
 
-				correctICurrTLeaseEnd(tNowM);
+				H.correctICurrTLeaseEnd(tNowM);
 
-				durClearIssued = time.Duration(modOneDay(H._T_LEASE_END[NextTLeaseEnd()]-tNowM))*time.Minute;
+				durClearIssued = time.Duration(modOneDay(int(H._T_LEASE_END[H.NextTLeaseEnd()])-tNowM))*time.Minute;
 				tClearIssuedStage = -40*time.Second;
 			}
 
@@ -306,8 +306,6 @@ func(H *DhcpHandler) LastFreeL() (freeL *linkedLease){
 	return;
 }
 func(H *DhcpHandler) GetReserveL(resL/*!nil*/ *linkedLease) (issuedL *linkedLease){
-	var nilL *linkedLease;
-
 	H.removeLease(resL, &H.qFirstReserveL, &H.qLastReserveL);
 	issuedL = resL;
 	issuedL.stage = IP_Issued;
@@ -366,7 +364,7 @@ func(H *DhcpHandler) DeleteClient(mac MAC48) net.IP{
 
 	return nil;
 }
-func(H *DhcpHandler) DeleteClient(lease/*!nil*/ *linkedLease) net.IP{
+func(H *DhcpHandler) DeleteClientL(lease/*!nil*/ *linkedLease) net.IP{
 	//TODO: on debug "if H.clients[mac].stage == IP_Free { panic("Bug#-5464985-"); }"
 	H.UniPutLease(H.UniRemoveLease(lease), IP_Free);
 	H.DeleteMAC(lease.mac);
@@ -375,12 +373,12 @@ func(H *DhcpHandler) DeleteClient(lease/*!nil*/ *linkedLease) net.IP{
 }
 
 
-func(H *DhcpHandler) correctICurrTLeaseEnd(tNowM time.Duration){
-	for _ := range H._T_LEASE_END {
-		if H._T_LEASE_END[H.iCurrTLeaseEnd] <= tNowM && H._T_LEASE_END[NextTLeaseEnd()] > tNowM {
+func(H *DhcpHandler) correctICurrTLeaseEnd(tNowM int){
+	for _ = range H._T_LEASE_END {
+		if int(H._T_LEASE_END[H.iCurrTLeaseEnd]) <= tNowM && int(H._T_LEASE_END[H.NextTLeaseEnd()]) > tNowM {
 			break;
 		}
-		H.iCurrTLeaseEnd = NextTLeaseEnd());
+		H.iCurrTLeaseEnd = H.NextTLeaseEnd();
 	}
 }
 func(H *DhcpHandler) NextTLeaseEnd() int{
@@ -393,10 +391,10 @@ func(H *DhcpHandler) LeaseDuration(ip net.IP) time.Duration{
 	var tNow = time.Now().Local();
 	var tNowM = tNow.Hour()*60 + tNow.Minute();
 
-	correctICurrTLeaseEnd(tNowM);
+	H.correctICurrTLeaseEnd(tNowM);
 
 	//minimize load: lease_time += ip_offset
-	return time.Duration(modOneDay(H._T_LEASE_END[NextTLeaseEnd()]-tNowM))*time.Minute + (dhcp.IPRange(H._START_IP, ip)*60)/len(H.leases)*time.Second;
+	return time.Duration(modOneDay(int(H._T_LEASE_END[H.NextTLeaseEnd()])-tNowM))*time.Minute + time.Duration((dhcp.IPRange(H._START_IP, ip)*60)/len(H.leases))*time.Second;
 }
 
 func(H *DhcpHandler) Handler(req dhcp.Packet, msgType dhcp.MessageType, options dhcp.Options) dhcp.Packet {
@@ -434,7 +432,7 @@ func(H *DhcpHandler) Handler(req dhcp.Packet, msgType dhcp.MessageType, options 
 				}
 
 				if outIP != nil {
-					return dhcp.ReplyPacket(req, dhcp.Offer, H._SERVER_IP, outIP, LeaseDuration(outIP),
+					return dhcp.ReplyPacket(req, dhcp.Offer, H._SERVER_IP, outIP, H.LeaseDuration(outIP),
 											H._OPTIONS.SelectOrderOrAll(options[dhcp.OptionParameterRequestList]));
 				}
 
@@ -486,7 +484,7 @@ func(H *DhcpHandler) Handler(req dhcp.Packet, msgType dhcp.MessageType, options 
 
 				if reqServerIP.Equal(H._SERVER_IP) {
 					if outIP != nil { H.clients[reqMAC].updated = true; //need on tLeaseEnd
-						              return dhcp.ReplyPacket(req, dhcp.ACK, H._SERVER_IP, outIP, LeaseDuration(outIP),
+						              return dhcp.ReplyPacket(req, dhcp.ACK, H._SERVER_IP, outIP, H.LeaseDuration(outIP),
 						                                      H._OPTIONS.SelectOrderOrAll(options[dhcp.OptionParameterRequestList]));
 					}else           { return dhcp.ReplyPacket(req, dhcp.NAK, H._SERVER_IP, nil,   0, nil) }
 				}
