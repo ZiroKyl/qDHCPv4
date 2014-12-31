@@ -4,6 +4,7 @@ import(
 	"fmt"
 	"log"
 	"net"
+	"strconv"
 
 	dhcp "github.com/krolaw/dhcp4"
 )
@@ -111,4 +112,23 @@ func main() {
 				}else{ defaultChanHandler <- reqChan{req, reqType, options, addr}; }
 			}
 		}())}
+}
+
+func serveOut(conn ServeConn, req dhcp.Packet, res dhcp.Packet, addr net.Addr) error {
+	if res != nil {
+		// If IP not available, broadcast
+		ipStr, portStr, err := net.SplitHostPort(addr.String());
+		if err != nil {
+			return err;
+		}
+
+		if net.ParseIP(ipStr).Equal(net.IPv4zero) || req.Broadcast() {
+			port, _ := strconv.Atoi(portStr);
+			addr = &net.UDPAddr{IP: net.IPv4bcast, Port: port};
+		}
+		if _, e := conn.WriteTo(res, addr); e != nil {
+			return e;
+		}
+	}
+	return nil;
 }

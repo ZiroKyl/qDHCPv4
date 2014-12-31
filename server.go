@@ -1,7 +1,6 @@
 package main
 
 import(
-	"strconv"
 	//"strings"
 	//"bytes"
 	"log"
@@ -262,7 +261,7 @@ func(H *DhcpHandler) GoHandle(){
 			}
 
 		case req := <- H.channelReq:
-			H.serveOut(req.req, H.Handler(req.req, req.reqType, req.options), req.addr);
+			serveOut(*H._CONN, req.req, H.Handler(req.req, req.reqType, req.options), req.addr);
 		}
 	}
 }
@@ -528,21 +527,3 @@ func(H *DhcpHandler) Handler(req dhcp.Packet, msgType dhcp.MessageType, options 
 		})[msgType]();
 };
 
-func(H *DhcpHandler) serveOut(req dhcp.Packet, res dhcp.Packet, addr net.Addr) error {
-	if res != nil {
-		// If IP not available, broadcast
-		ipStr, portStr, err := net.SplitHostPort(addr.String());
-		if err != nil {
-			return err;
-		}
-
-		if net.ParseIP(ipStr).Equal(net.IPv4zero) || req.Broadcast() {
-			port, _ := strconv.Atoi(portStr);
-			addr = &net.UDPAddr{IP: net.IPv4bcast, Port: port};
-		}
-		if _, e := (*H._CONN).WriteTo(res, addr); e != nil {
-			return e;
-		}
-	}
-	return nil;
-}
