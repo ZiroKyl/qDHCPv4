@@ -157,9 +157,9 @@ func(H *DhcpHandler) GoHandle(){
 
 		//clear old Discover-Offer leases on timeout
 		case <- time.After(durClearReserve):
-			if H.qLastReserveL != nil { // time to Request lease = 0..durClearReserve
-				H.UniPutLease(H.UniRemoveLease(H.qLastReserveL), IP_Free);
-				H.DeleteMAC(H.qLastReserveL.mac);
+			if oldLease:=H.qLastReserveL; oldLease != nil { // time to Request lease = 0..durClearReserve
+				H.UniPutLease(H.UniRemoveLease(oldLease), IP_Free);
+				H.DeleteMAC(oldLease.mac);
 
 				durClearReserve = dNotEmptyReserve;
 			}else{
