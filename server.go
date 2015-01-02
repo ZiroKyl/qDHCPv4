@@ -113,7 +113,7 @@ func(H *DhcpHandler) GoHandle(){
 	var dEmptyReserve    = time.Duration(len(H.leases))*5*time.Millisecond;
 	var dNotEmptyReserve =                              5*time.Millisecond;
 
-	var durClearReserve = dEmptyReserve;
+	var timerClearReserve = time.After(dEmptyReserve);
 
 	var tNow = time.Now().Local();
 	var tNowM = tNow.Hour() * 60 + tNow.Minute();
@@ -122,10 +122,11 @@ func(H *DhcpHandler) GoHandle(){
 
 	var durClearIssued = time.Duration(modOneDay(int(H._T_LEASE_END[H.NextTLeaseEnd()])-tNowM))*time.Minute;
 	var tClearIssuedStage = -40*time.Second;
+	var timerClearIssuedStage = time.After(durClearIssued + tClearIssuedStage);
 	for{
 		select{
 		// clear old Issued leases on schedule
-		case <- time.After(durClearIssued + tClearIssuedStage):
+		case <- timerClearIssuedStage:
 			switch(tClearIssuedStage){
 			//set update=false on Issued leases
 			case -40*time.Second:
@@ -137,6 +138,7 @@ func(H *DhcpHandler) GoHandle(){
 
 				durClearIssued = 40*time.Second;
 				tClearIssuedStage = 1*time.Minute + 20*time.Second;
+				timerClearIssuedStage = time.After(durClearIssued + tClearIssuedStage);
 			//delete Issued leases if update=false
 			case 1*time.Minute + 20*time.Second:
 				for _,l := range H.leases{
@@ -152,18 +154,18 @@ func(H *DhcpHandler) GoHandle(){
 
 				durClearIssued = time.Duration(modOneDay(int(H._T_LEASE_END[H.NextTLeaseEnd()])-tNowM))*time.Minute;
 				tClearIssuedStage = -40*time.Second;
+				timerClearIssuedStage = time.After(durClearIssued + tClearIssuedStage);
 			}
 
-
 		//clear old Discover-Offer leases on timeout
-		case <- time.After(durClearReserve):
+		case <- timerClearReserve:
 			if oldLease:=H.qLastReserveL; oldLease != nil { // time to Request lease = 0..durClearReserve
 				H.UniPutLease(H.UniRemoveLease(oldLease), IP_Free);
 				H.DeleteMAC(oldLease.mac);
 
-				durClearReserve = dNotEmptyReserve;
+				timerClearReserve = time.After(dNotEmptyReserve);
 			}else{
-				durClearReserve = dEmptyReserve;
+				timerClearReserve = time.After(dEmptyReserve);
 			}
 
 		case req := <- H.channelReq:
