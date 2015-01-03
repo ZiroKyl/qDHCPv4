@@ -54,7 +54,7 @@ func main() {
 		var tLeaseEnd = []int16{
 			11*60 + 35,
 			12*60 + 50,
-			16*60 + 29,
+			17*60 + 23,
 		};
 
 		// for parallel run rewrite to new(DhcpHandler) OR (better) store in DhcpHandler{} const fields and

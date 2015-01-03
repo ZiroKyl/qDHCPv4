@@ -130,20 +130,20 @@ func(H *DhcpHandler) GoHandle(){
 			switch(tClearIssuedStage){
 			//set update=false on Issued leases
 			case -40*time.Second:
-				for _,l := range H.leases{
-					if l.stage == IP_Issued {
-						l.updated = false;
+				for i := range H.leases{
+					if H.leases[i].stage == IP_Issued {
+						H.leases[i].updated = false;
 					}
 				}
 
 				durClearIssued = 40*time.Second;
-				tClearIssuedStage = 1*time.Minute + 20*time.Second;
+				tClearIssuedStage = 2*time.Minute + 20*time.Second;
 				timerClearIssuedStage = time.After(durClearIssued + tClearIssuedStage);
 			//delete Issued leases if update=false
-			case 1*time.Minute + 20*time.Second:
-				for _,l := range H.leases{
-					if l.stage == IP_Issued && l.updated == false {
-						H.DeleteClientL(&l);
+			case 2*time.Minute + 20*time.Second:
+				for i := range H.leases{
+					if H.leases[i].stage == IP_Issued && H.leases[i].updated == false {
+						H.DeleteClientL(&H.leases[i]);
 					}
 				}
 
