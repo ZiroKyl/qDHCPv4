@@ -282,7 +282,9 @@ func(H *DhcpHandler) DeleteClientL(lease/*!nil*/ *linkedLease) net.IP{
 
 func(H *DhcpHandler) correctICurrTLeaseEnd(tNowM int){
 	for _ = range H._T_LEASE_END {
-		if int(H._T_LEASE_END[H.iCurrTLeaseEnd]) <= tNowM && int(H._T_LEASE_END[H.NextTLeaseEnd()]) > tNowM {
+		// L a R -> len(a-L)+len(R-a)=len(R-L)
+		if modOneDay(tNowM-int(H._T_LEASE_END[H.iCurrTLeaseEnd])) + modOneDay(int(H._T_LEASE_END[H.NextTLeaseEnd()])-tNowM) ==
+		   modOneDay(int(H._T_LEASE_END[H.NextTLeaseEnd()]-H._T_LEASE_END[H.iCurrTLeaseEnd])) {
 			break;
 		}
 		H.iCurrTLeaseEnd = H.NextTLeaseEnd();
