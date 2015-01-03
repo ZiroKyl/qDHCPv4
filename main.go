@@ -54,7 +54,7 @@ func main() {
 		var tLeaseEnd = []int16{
 			11*60 + 35,
 			12*60 + 50,
-			13*60 + 05,
+			16*60 + 29,
 		};
 
 		// for parallel run rewrite to new(DhcpHandler) OR (better) store in DhcpHandler{} const fields and
@@ -106,7 +106,8 @@ func main() {
 				}
 
 				/*log.Println(leases[string(bytes.SplitN(options[dhcp.OptionHostName],[]byte{'-'},2)[0])]);*/
-				var device [2]byte; copy(device[:],options[dhcp.OptionHostName][:2]);
+				var device [2]byte;
+				if len(options[dhcp.OptionHostName])>=2 { copy(device[:],options[dhcp.OptionHostName][:2]); }
 
 				if     deviceChanHandler,exist := deviceChanHandlers[device]; exist==true {
 					   deviceChanHandler  <- reqChan{req, reqType, options, addr};
