@@ -1,0 +1,19 @@
+{
+  "globalOptions":{
+    "ServerIdentifier": "194.188.64.28",
+    "SubnetMask": "255.255.0.0",
+    "Router": "194.188.64.8",
+    "DomainNameServer": "194.188.64.8"
+  },
+  "leaseEndTime":[
+    "11:35",
+    "12:50",
+    "17:23"
+  ],
+  "defaultDevice":{"startIP": "194.188.32.1", "rangeIP": 1024},
+  "devices":[
+    {"name": "an", "startIP": "194.188.36.1", "rangeIP": 1024},
+    {"name": "iP", "startIP": "194.188.40.1", "rangeIP": 1024},
+    {"name": "Wi", "startIP": "194.188.44.1", "rangeIP": 1024}
+  ]
+}

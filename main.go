@@ -4,7 +4,12 @@ import(
 	"fmt"
 	"log"
 	"net"
+	"time"
+	"strings"
 	"strconv"
+	"errors"
+	"encoding/json"
+	"io/ioutil"
 
 	dhcp "github.com/krolaw/dhcp4"
 )
@@ -25,7 +30,7 @@ import(
 // http://www.ingmarverheij.com/microsoft-vendor-specific-dhcp-options-explained-and-demystified/
 
 
-//TODO: config to JSON
+//TODO: config to JSON -> http://stackoverflow.com/a/21610752 http://golang.org/pkg/encoding/json/ -> struct for dhcpOptions
 //TODO: exclude return (or set H._START_IP and range_ip) .0/24 (IP & mask = all zero) & .255/24 (IP & mask = all one) IPs
 //TODO: check delta tLeaseEnd > 2*(40sec + 60sec + 20sec)
 //TODO: создать отдельный пакет CLI/main и qDHCPv4
@@ -36,6 +41,100 @@ import(
 //TODO: Q: network IO is async?  A: No.
 
 
+type TimeM int16;
+
+func (t *TimeM) UnmarshalJSON(b []byte) error{
+	tp, err := time.Parse("15:04", strings.Trim(string(b), `"`)); //magic string format: stackoverflow.com/a/14106561
+
+	if err == nil {
+		*t = TimeM(tp.Hour()*60 + tp.Minute());
+	}
+
+	return err;
+}
+
+type IPv4byte []byte;
+
+func (ipb *IPv4byte) UnmarshalJSON(b []byte) error{
+	str := strings.Trim(string(b), `"`)
+
+	if ip := net.ParseIP(str); ip != nil {
+		if ip=ip.To4(); ip != nil {
+			*ipb = []byte(ip);
+			return nil;
+		}
+	}
+
+	return errors.New("IPv4 is not correct: " + str);
+}
+
+func configure(jsonConf []byte, conn *ServeConn) (err error, deviceChanHandlers map[[2]byte] chan<-reqChan, defaultChanHandler chan<-reqChan){
+	type Device struct{
+		Name    string   `json:"name"`;
+		StartIP IPv4byte `json:"startIP"`;
+		RangeIP int      `json:"rangeIP"`;
+	};
+	var conf = struct{
+		GlobalOptions  dhcp.Options `json:"globalOptions"`;
+		LeaseEndTime []TimeM        `json:"leaseEndTime"`;
+		Devices      []Device       `json:"devices"`;
+		DefaultDevice  Device       `json:"defaultDevice"`;
+	}{GlobalOptions: dhcp.Options{}};	//dhcp.Options is map
+
+	if err = json.Unmarshal(jsonConf, &conf); err != nil {
+		return;
+	}
+
+	// >:-()
+	var tLeaseEnd = make([]int16, len(conf.LeaseEndTime));
+	for i := range conf.LeaseEndTime{
+		tLeaseEnd[i] = int16(conf.LeaseEndTime[i]);
+	}
+
+	//TODO: add check input conf
+
+	// for parallel run rewrite to new(DhcpHandler) OR (better) store in DhcpHandler{} const fields and
+	// create (new()) in Init() writable fields
+	var Handlers = make([]struct{cReq chan <-reqChan; hDhcp DhcpHandler}, 1+len(conf.Devices));
+
+	// rule: len(device)==n && len(chan)==n
+	for i := range conf.Devices {
+		cTemp := make(chan reqChan, 1+len(conf.Devices));
+		Handlers[1+i].cReq = cTemp;
+		Handlers[1+i].hDhcp.Init(conn, net.IP(conf.GlobalOptions[dhcp.OptionServerIdentifier]),
+			                            net.IP(conf.Devices[i].StartIP),
+			                            conf.Devices[i].RangeIP,
+			                            conf.GlobalOptions,
+			                            tLeaseEnd,
+			                            cTemp);
+	}
+	{
+		cTemp := make(chan reqChan, 1+len(conf.Devices));
+		Handlers[0].cReq = cTemp;
+		Handlers[0].hDhcp.Init(conn, net.IP(conf.GlobalOptions[dhcp.OptionServerIdentifier]),
+			                          net.IP(conf.DefaultDevice.StartIP),
+			                          conf.DefaultDevice.RangeIP,
+			                          conf.GlobalOptions,
+			                          tLeaseEnd,
+			                          cTemp);
+	}
+
+	deviceChanHandlers = make(map[[2]byte] chan <-reqChan, len(conf.Devices));
+
+	for i := range conf.Devices {
+		var devName [2]byte; copy(devName[:],conf.Devices[i].Name[:2]);
+
+		deviceChanHandlers[devName] = Handlers[1+i].cReq;
+	}
+	defaultChanHandler = Handlers[0].cReq;
+
+	for i := range Handlers {
+		go Handlers[i].hDhcp.GoHandle();
+	}
+
+	return;
+}
+
 func main() {
 	fmt.Printf("Hello LAN!");
 
@@ -43,8 +142,18 @@ func main() {
 	var deviceChanHandlers map[[2]byte] chan<-reqChan;
 	var defaultChanHandler              chan<-reqChan;
 
+	var configJSON, err = ioutil.ReadFile("src/qDHCPv4/config.json");
+	if err != nil {
+		log.Fatalln("error reading config file:", err);
+	}
+
+	err,deviceChanHandlers,defaultChanHandler = configure(configJSON, &conn);
+	if err != nil {
+		log.Fatalln("error in config file:", err);
+	}
+
 	// rule: len(device)==n && len(chan)==n
-	{
+	/*{
 		var dhcpOptions = dhcp.Options{
 			dhcp.OptionSubnetMask:       []byte{255, 255,  0, 0},
 			dhcp.OptionRouter:           []byte{194, 188, 64, 8},
@@ -77,7 +186,7 @@ func main() {
 		go Handlers[1].hDhcp.GoHandle();
 		go Handlers[2].hDhcp.GoHandle();
 		go Handlers[3].hDhcp.GoHandle();
-	}
+	}*/
 
 	for{
 		log.Println(func() error{
