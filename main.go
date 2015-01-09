@@ -12,6 +12,7 @@ import(
 	"io/ioutil"
 
 	dhcp "github.com/krolaw/dhcp4"
+	"github.com/ZiroKyl/reflectDHCP"
 )
 
 // http://support.microsoft.com/kb/169289/ru
@@ -75,11 +76,11 @@ func configure(jsonConf []byte, conn *ServeConn) (err error, deviceChanHandlers 
 		RangeIP int      `json:"rangeIP"`;
 	};
 	var conf = struct{
-		GlobalOptions  dhcp.Options `json:"globalOptions"`;
-		LeaseEndTime []TimeM        `json:"leaseEndTime"`;
-		Devices      []Device       `json:"devices"`;
-		DefaultDevice  Device       `json:"defaultDevice"`;
-	}{GlobalOptions: dhcp.Options{}};	//dhcp.Options is map
+		GlobalOptions  reflectDHCP.Options `json:"globalOptions"`;
+		LeaseEndTime []TimeM               `json:"leaseEndTime"`;
+		Devices      []Device              `json:"devices"`;
+		DefaultDevice  Device              `json:"defaultDevice"`;
+	}{GlobalOptions: reflectDHCP.Options{}};	//reflectDHCP.Options is map
 
 	if err = json.Unmarshal(jsonConf, &conf); err != nil {
 		return;
@@ -104,7 +105,7 @@ func configure(jsonConf []byte, conn *ServeConn) (err error, deviceChanHandlers 
 		Handlers[1+i].hDhcp.Init(conn, net.IP(conf.GlobalOptions[dhcp.OptionServerIdentifier]),
 			                            net.IP(conf.Devices[i].StartIP),
 			                            conf.Devices[i].RangeIP,
-			                            conf.GlobalOptions,
+			                            dhcp.Options(conf.GlobalOptions),
 			                            tLeaseEnd,
 			                            cTemp);
 	}
@@ -114,7 +115,7 @@ func configure(jsonConf []byte, conn *ServeConn) (err error, deviceChanHandlers 
 		Handlers[0].hDhcp.Init(conn, net.IP(conf.GlobalOptions[dhcp.OptionServerIdentifier]),
 			                          net.IP(conf.DefaultDevice.StartIP),
 			                          conf.DefaultDevice.RangeIP,
-			                          conf.GlobalOptions,
+			                          dhcp.Options(conf.GlobalOptions),
 			                          tLeaseEnd,
 			                          cTemp);
 	}

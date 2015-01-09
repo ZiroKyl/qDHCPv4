@@ -2,8 +2,8 @@
   "globalOptions":{
     "ServerIdentifier": "194.188.64.28",
     "SubnetMask": "255.255.0.0",
-    "Router": "194.188.64.8",
-    "DomainNameServer": "194.188.64.8"
+    "Router": ["194.188.64.8"],
+    "DomainNameServer": ["194.188.64.8"]
   },
   "leaseEndTime":[
     "11:35",
