@@ -7,9 +7,11 @@ import(
 	"time"
 	"strings"
 	"strconv"
+	"encoding/binary"
 	"errors"
 	"encoding/json"
 	"io/ioutil"
+	"sort"
 
 	dhcp "github.com/krolaw/dhcp4"
 	"github.com/ZiroKyl/reflectDHCP"
@@ -31,13 +33,8 @@ import(
 // http://www.ingmarverheij.com/microsoft-vendor-specific-dhcp-options-explained-and-demystified/
 
 
-//TODO: config to JSON -> http://stackoverflow.com/a/21610752 http://golang.org/pkg/encoding/json/ -> struct for dhcpOptions
-//TODO: exclude return (or set H._START_IP and range_ip) .0/24 (IP & mask = all zero) & .255/24 (IP & mask = all one) IPs
-//TODO: check delta tLeaseEnd > 2*(40sec + 60sec + 20sec)
 //TODO: создать отдельный пакет CLI/main и qDHCPv4
 //TODO: test speed: Go-style (struct) vs JavaScript-style (func+closure)
-
-//TODO: выдавать нормальные опции (шлюз, маска, ...)
 
 //TODO: Q: network IO is async?  A: No.
 
@@ -69,6 +66,17 @@ func (ipb *IPv4byte) UnmarshalJSON(b []byte) error{
 	return errors.New("IPv4 is not correct: " + str);
 }
 
+type SortClosure struct{
+	a []interface{};
+	closure func(i0, i1 int) bool
+}
+
+func (s SortClosure) Len() int             { return len(s.a); }
+func (s SortClosure) Swap(i0, i1 int)      { s.a[i0],s.a[i1] = s.a[i1],s.a[i0]; }
+func (s SortClosure) Less(i0, i1 int) bool { return s.closure(i0, i1); }
+
+
+//TODO: config to JSON -> http://stackoverflow.com/a/21610752 http://golang.org/pkg/encoding/json/ -> struct for dhcpOptions
 func configure(jsonConf []byte, conn *ServeConn) (err error, deviceChanHandlers map[[2]byte] chan<-reqChan, defaultChanHandler chan<-reqChan){
 	type Device struct{
 		Name    string   `json:"name"`;
@@ -86,13 +94,59 @@ func configure(jsonConf []byte, conn *ServeConn) (err error, deviceChanHandlers 
 		return;
 	}
 
+	{// check input conf
+		// check delta LeaseEndTime > 2*(40sec + 120sec + 20sec)
+		if lt := len(conf.LeaseEndTime); lt >= 1 {
+			for i := 1; i < lt; i++ {
+				if !(conf.LeaseEndTime[i-1]+6 /*Minute*/ < conf.LeaseEndTime[i]) {
+					err = errors.New("(LeaseEndTime #" + string(i) + " - LeaseEndTime #" + string(i-1) + ") not > 5 minute");
+					return;
+				}
+			}
+		}else { err = errors.New("leaseEndTime must have at least one element"); return; }
+
+		// check Default Device
+		if len(conf.DefaultDevice.Name) != 0 { log.Println("defaultDevice.name is ignored! pls. delete the defaultDevice.name"); }
+		if conf.DefaultDevice.RangeIP    < 1 { err = errors.New("defaultDevice.rangeIP must be >= 1"); return; }
+
+		// check Devices
+		for i, dev := range conf.Devices {
+			if len(dev.Name) != 2 { err = errors.New("length of devices[" + string(i) + "].name must be = 2"); return; }
+			if dev.RangeIP    < 1 { err = errors.New("defaultDevice.rangeIP must be >= 1"); return; }
+		}
+
+		{// IP ranges intersection check
+			var ipr = make([]interface{}, 1+len(conf.Devices));
+			ipr[0] = []int{int(binary.BigEndian.Uint32(conf.DefaultDevice.StartIP)), conf.DefaultDevice.RangeIP -1/*not need "-1" in future*/};
+
+			for i,d := range conf.Devices {
+				ipr[i+1] = []int{int(binary.BigEndian.Uint32(d.StartIP)), d.RangeIP -1/*not need "-1" in future*/};
+			}
+
+			sort.Sort(SortClosure{ipr, func(i0, i1 int)bool{ return ipr[i0].([]int)[0] < ipr[i1].([]int)[0]; } });
+
+			for i:=0; i<len(ipr)-1; i++ {
+				if a,add,b := ipr[i  ].([]int)[0],
+				              ipr[i  ].([]int)[1],
+				              ipr[i+1].([]int)[0];
+				!(a+add < b) {
+					var bufIPa = make(net.IP,4); binary.BigEndian.PutUint32(bufIPa,uint32(a));
+					var bufIPb = make(net.IP,4); binary.BigEndian.PutUint32(bufIPb,uint32(b));
+
+					err = errors.New("IP ranges intersection! startIP: " + bufIPa.String() + " AND " + bufIPb.String());
+					return;
+				}
+			}
+
+			//TODO: exclude return (or set H._START_IP and range_ip) .0/24 (IP & mask = all zero) & .255/24 (IP & mask = all one) IPs
+		}
+	}
+
 	// >:-()
 	var tLeaseEnd = make([]int16, len(conf.LeaseEndTime));
 	for i := range conf.LeaseEndTime{
 		tLeaseEnd[i] = int16(conf.LeaseEndTime[i]);
 	}
-
-	//TODO: add check input conf
 
 	// for parallel run rewrite to new(DhcpHandler) OR (better) store in DhcpHandler{} const fields and
 	// create (new()) in Init() writable fields
