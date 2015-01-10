@@ -11,7 +11,8 @@ import(
 	"errors"
 	"encoding/json"
 	"io/ioutil"
-	"sort"
+
+	"qDHCPv4/utils/closure"
 
 	dhcp "github.com/krolaw/dhcp4"
 	"github.com/ZiroKyl/reflectDHCP"
@@ -66,15 +67,6 @@ func (ipb *IPv4byte) UnmarshalJSON(b []byte) error{
 	return errors.New("IPv4 is not correct: " + str);
 }
 
-type SortClosure struct{
-	a []interface{};
-	closure func(i0, i1 int) bool
-}
-
-func (s SortClosure) Len() int             { return len(s.a); }
-func (s SortClosure) Swap(i0, i1 int)      { s.a[i0],s.a[i1] = s.a[i1],s.a[i0]; }
-func (s SortClosure) Less(i0, i1 int) bool { return s.closure(i0, i1); }
-
 
 //TODO: config to JSON -> http://stackoverflow.com/a/21610752 http://golang.org/pkg/encoding/json/ -> struct for dhcpOptions
 func configure(jsonConf []byte, conn *ServeConn) (err error, deviceChanHandlers map[[2]byte] chan<-reqChan, defaultChanHandler chan<-reqChan){
@@ -123,7 +115,7 @@ func configure(jsonConf []byte, conn *ServeConn) (err error, deviceChanHandlers 
 				ipr[i+1] = []int{int(binary.BigEndian.Uint32(d.StartIP)), d.RangeIP -1/*not need "-1" in future*/};
 			}
 
-			sort.Sort(SortClosure{ipr, func(i0, i1 int)bool{ return ipr[i0].([]int)[0] < ipr[i1].([]int)[0]; } });
+			closure.Sort(ipr, func(i0, i1 int)bool{ return ipr[i0].([]int)[0] < ipr[i1].([]int)[0]; });
 
 			for i:=0; i<len(ipr)-1; i++ {
 				if a,add,b := ipr[i  ].([]int)[0],
