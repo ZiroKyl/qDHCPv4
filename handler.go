@@ -1,8 +1,6 @@
 package main
 
 import(
-	//"strings"
-	//"bytes"
 	"log"
 	"net"
 	"time"
