@@ -1,3 +1,5 @@
+// Modified version of github.com/krolaw/dhcp4/server.go
+
 package main
 
 import(
