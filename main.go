@@ -1,6 +1,7 @@
 package main
 
 import(
+	"flag"
 	"log"
 	"net"
 	"time"
@@ -33,6 +34,7 @@ import(
 
 
 //TODO: test speed: Go-style (struct) vs JavaScript-style (func+closure)
+//TODO: Add ARP ping
 
 
 type TimeM int16;
@@ -182,14 +184,20 @@ func main() {
 	var deviceChanHandlers map[[2]byte] chan<-reqChan;
 	var defaultChanHandler              chan<-reqChan;
 
-	var configJSON, err = ioutil.ReadFile("src/qDHCPv4/config.json");//TODO: Add read patch from "command line"
-	if err != nil {
-		log.Fatalln("error reading config file:", err);
-	}
+	{
+		var configPatch = flag.String("conf", "example_config.json", "patch to config file");
 
-	err,deviceChanHandlers,defaultChanHandler = configure(configJSON, &conn);
-	if err != nil {
-		log.Fatalln("error in config file:", err);
+		flag.Parse();
+
+		var configJSON, err = ioutil.ReadFile(*configPatch);
+		if err != nil {
+			log.Fatalln("error reading config file:", err);
+		}
+
+		err,deviceChanHandlers,defaultChanHandler = configure(configJSON, &conn);
+		if err != nil {
+			log.Fatalln("error in config file:", err);
+		}
 	}
 
 	// rule: len(device)==n && len(chan)==n
@@ -228,6 +236,6 @@ func main() {
 		go Handlers[3].hDhcp.GoHandle();
 	}*/
 
-	//TODO: Add exponential timer
+	//TODO: Add exponential timer wait
 	for{ log.Println(serveIn(&conn, deviceChanHandlers, defaultChanHandler)); }
 }
