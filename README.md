@@ -15,8 +15,8 @@ qDHCPv4 is DHCPv4 server for public places that use unmanaged switches.
 ## Usage
 For Windows 64bit [download](https://github.com/ZiroKyl/qDHCPv4/releases), unpack and run:
 ```cmd
-qDHCPv4.exe -conf=<patch to config.json>
+qDHCPv4.exe -conf=<path to config.json>
 ```
-For other systems: [compile binary](https://golang.org/doc/install) `go build`.
+For other systems: [compile binary](https://golang.org/doc/install) `go get` `go build`.
 
 ## Documentation ...
