@@ -21,9 +21,9 @@ For other systems: [compile binary](https://golang.org/doc/install) `go get` `go
 
 ## Documentation
 ### LeaseEndTime scheduler logic
-![LeaseEndTime](//raw.githubusercontent.com/ZiroKyl/qDHCPv4/dev/doc/scheduler_logic.svg)
+![LeaseEndTime](https://cdn.rawgit.com/ZiroKyl/qDHCPv4/dev/doc/scheduler_logic.svg)
 ### LeaseEndTime 3 user example
-![LeaseEndTime](//raw.githubusercontent.com/ZiroKyl/qDHCPv4/dev/doc/example_3user.svg)
+![LeaseEndTime](https://cdn.rawgit.com/ZiroKyl/qDHCPv4/dev/doc/example_3user.svg)
 ### Config file
 See [example_config.json](example_config.json).
 #### globalOptions
